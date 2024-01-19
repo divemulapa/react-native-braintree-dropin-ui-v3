@@ -13,6 +13,7 @@ import com.braintreepayments.api.DropInListener;
 import com.braintreepayments.api.DropInPaymentMethod;
 import com.braintreepayments.api.ThreeDSecureRequest;
 import com.braintreepayments.api.UserCanceledException;
+import com.braintreepayments.api.DataCollector;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
@@ -48,6 +49,32 @@ public class RNBraintreeDropInModule extends ReactContextBaseJavaModule {
 
   public RNBraintreeDropInModule(ReactApplicationContext reactContext) {
     super(reactContext);
+  }
+
+  @ReactMethod
+  private void collectDeviceData(final String clientToken, final Promise promise) {
+    if (clientToken == null) {
+      promise.reject("NO_CLIENT_TOKEN", "You must provide a client token");
+      return;
+    }
+    Activity currentActivity = getCurrentActivity();
+    if (currentActivity == null) {
+      promise.reject("NO_ACTIVITY", "There is no current activity");
+      return;
+    }
+
+    BraintreeClient braintreeClient = new BraintreeClient(currentActivity, clientToken);
+    DataCollector dataCollector = new DataCollector(braintreeClient);
+
+    dataCollector.collectDeviceData(currentActivity, (deviceData, error) -> {
+      String data = deviceData;
+      if (data == null) {
+        data = "";
+      }
+      WritableMap jsResult = Arguments.createMap();
+      jsResult.putString("deviceData", data);
+      promise.resolve(jsResult);
+    });
   }
 
   @ReactMethod
