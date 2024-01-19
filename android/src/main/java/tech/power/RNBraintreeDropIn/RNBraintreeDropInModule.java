@@ -13,6 +13,10 @@ import com.braintreepayments.api.DropInListener;
 import com.braintreepayments.api.DropInPaymentMethod;
 import com.braintreepayments.api.ThreeDSecureRequest;
 import com.braintreepayments.api.UserCanceledException;
+import com.braintreepayments.api.DataCollector;
+import com.braintreepayments.api.PayPalAccountNonce;
+import com.braintreepayments.api.GooglePayCardNonce;
+import com.braintreepayments.api.PostalAddress;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
@@ -35,6 +39,7 @@ public class RNBraintreeDropInModule extends ReactContextBaseJavaModule {
   private boolean isVerifyingThreeDSecure = false;
   private static DropInClient dropInClient = null;
   private static String clientToken = null;
+  public static final int GPAY_BILLING_ADDRESS_FORMAT_FULL = 1;
 
   public static void initDropInClient(FragmentActivity activity) {
     dropInClient = new DropInClient(activity, callback -> {
@@ -48,6 +53,32 @@ public class RNBraintreeDropInModule extends ReactContextBaseJavaModule {
 
   public RNBraintreeDropInModule(ReactApplicationContext reactContext) {
     super(reactContext);
+  }
+
+  @ReactMethod
+  private void collectDeviceData(final String clientToken, final Promise promise) {
+    if (clientToken == null) {
+      promise.reject("NO_CLIENT_TOKEN", "You must provide a client token");
+      return;
+    }
+    Activity currentActivity = getCurrentActivity();
+    if (currentActivity == null) {
+      promise.reject("NO_ACTIVITY", "There is no current activity");
+      return;
+    }
+
+    BraintreeClient braintreeClient = new BraintreeClient(currentActivity, clientToken);
+    DataCollector dataCollector = new DataCollector(braintreeClient);
+
+    dataCollector.collectDeviceData(currentActivity, (deviceData, error) -> {
+      String data = deviceData;
+      if (data == null) {
+        data = "";
+      }
+      WritableMap jsResult = Arguments.createMap();
+      jsResult.putString("deviceData", data);
+      promise.resolve(jsResult);
+    });
   }
 
   @ReactMethod
@@ -79,6 +110,8 @@ public class RNBraintreeDropInModule extends ReactContextBaseJavaModule {
           .setCurrencyCode(Objects.requireNonNull(options.getString("currencyCode")))
           .build());
       googlePayRequest.setBillingAddressRequired(true);
+      googlePayRequest.setEmailRequired(true);
+      googlePayRequest.setBillingAddressFormat(GPAY_BILLING_ADDRESS_FORMAT_FULL);
       googlePayRequest.setGoogleMerchantId(options.getString("googlePayMerchantId"));
 
       dropInRequest.setGooglePayDisabled(false);
@@ -247,7 +280,38 @@ public class RNBraintreeDropInModule extends ReactContextBaseJavaModule {
       promise.reject("NO_PAYMENT_METHOD", "There is no payment method");
       return;
     }
-
+    PostalAddress billingAddress = null;
+    if(paymentMethodNonce instanceof PayPalAccountNonce) {
+      PayPalAccountNonce payPalAccountNonce = (PayPalAccountNonce) paymentMethodNonce;
+      jsResult.putString("firstName", payPalAccountNonce.getFirstName());
+      jsResult.putString("lastName", payPalAccountNonce.getLastName());
+      jsResult.putString("email", payPalAccountNonce.getEmail());
+      billingAddress = payPalAccountNonce.getBillingAddress();
+    } else if (paymentMethodNonce instanceof GooglePayCardNonce) {
+      GooglePayCardNonce googlePayCardNonce = (GooglePayCardNonce) paymentMethodNonce;
+      billingAddress = googlePayCardNonce.getBillingAddress();
+      jsResult.putString("email", googlePayCardNonce.getEmail());
+      if(billingAddress != null) {
+        String name = billingAddress.getRecipientName();
+        if(!name.equals("")) {
+          short lastIndexOfSpace = (short) name.lastIndexOf(" ");
+          if(lastIndexOfSpace == -1) {
+            jsResult.putString("firstName", name.trim());
+          } else {
+            jsResult.putString("firstName", name.substring(0, lastIndexOfSpace));
+            jsResult.putString("lastName", name.substring(lastIndexOfSpace));
+          }
+        }
+      }
+    }
+    if(billingAddress != null) {
+      jsResult.putString("addressLine1", billingAddress.getStreetAddress());
+      jsResult.putString("addressLine2", billingAddress.getExtendedAddress());
+      jsResult.putString("city", billingAddress.getLocality());
+      jsResult.putString("state", billingAddress.getRegion());
+      jsResult.putString("country", billingAddress.getCountryCodeAlpha2());
+      jsResult.putString("zip1", billingAddress.getPostalCode());
+    }
     jsResult.putString("nonce", paymentMethodNonce.getString());
     jsResult.putString("type", currentActivity.getString(dropInPaymentMethod.getLocalizedName()));
     jsResult.putString("description", dropInResult.getPaymentDescription());

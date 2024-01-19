@@ -1,6 +1,7 @@
 #import "RNBraintreeDropIn.h"
 #import <React/RCTUtils.h>
 #import "BTThreeDSecureRequest.h"
+#import "BTPayPalAccountNonce.h"
 
 @implementation RNBraintreeDropIn
 
@@ -9,6 +10,22 @@
     return dispatch_get_main_queue();
 }
 RCT_EXPORT_MODULE(RNBraintreeDropIn)
+
+RCT_EXPORT_METHOD(collectDeviceData:(NSString*)clientToken resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+{
+    if (!clientToken) {
+        reject(@"NO_CLIENT_TOKEN", @"You must provide a client token", nil);
+        return;
+    }
+    BTAPIClient *apiClient = [[BTAPIClient alloc] initWithAuthorization:clientToken];
+    self.dataCollector = [[BTDataCollector alloc] initWithAPIClient:apiClient];
+
+    [self.dataCollector collectDeviceData:^(NSString * _Nonnull deviceData) {
+        NSMutableDictionary* jsResult = [NSMutableDictionary new];
+        [jsResult setObject:deviceData forKey:@"deviceData"];
+        resolve(jsResult);
+    }];
+}
 
 RCT_EXPORT_METHOD(show:(NSDictionary*)options resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 {
@@ -97,7 +114,11 @@ RCT_EXPORT_METHOD(show:(NSDictionary*)options resolver:(RCTPromiseResolveBlock)r
             @[
                 [PKPaymentSummaryItem summaryItemWithLabel:merchantName amount:orderTotal]
             ];
-
+        if (@available(iOS 11.0, *)) {
+            self.paymentRequest.requiredBillingContactFields = [[NSSet<PKContactField> alloc] initWithObjects: PKContactFieldPostalAddress, PKContactFieldEmailAddress, PKContactFieldName, nil];
+        } else {
+            reject(@"MISSING_OPTIONS", @"Not all required Apple Pay options were provided", nil);
+        }
         self.viewController = [[PKPaymentAuthorizationViewController alloc] initWithPaymentRequest: self.paymentRequest];
         self.viewController.delegate = self;
     }else{
@@ -222,7 +243,23 @@ RCT_EXPORT_METHOD(tokenizeCard:(NSString*)clientToken
             [result setObject:[NSString stringWithFormat: @"%@ %@", @"", tokenizedApplePayPayment.type] forKey:@"description"];
             [result setObject:[NSNumber numberWithBool:false] forKey:@"isDefault"];
             [result setObject:self.deviceDataCollector forKey:@"deviceData"];
-
+            if(payment.billingContact && payment.billingContact.postalAddress) {
+                [result setObject:payment.billingContact.name.givenName forKey:@"firstName"];
+                [result setObject:payment.billingContact.name.familyName forKey:@"lastName"];
+                if(payment.billingContact.emailAddress) {
+                    [result setObject:payment.billingContact.emailAddress forKey:@"email"];
+                }
+                NSString *street = payment.billingContact.postalAddress.street;
+                NSArray *splitArray = [street componentsSeparatedByString:@"\n"];
+                [result setObject:splitArray[0] forKey:@"addressLine1"];
+                if([splitArray count] > 1 && splitArray[1]) {
+                    [result setObject:splitArray[1] forKey:@"addressLine2"];
+                }
+                [result setObject:payment.billingContact.postalAddress.city forKey:@"city"];
+                [result setObject:payment.billingContact.postalAddress.state forKey:@"state"];
+                [result setObject:payment.billingContact.postalAddress.ISOCountryCode forKey:@"country"];
+                [result setObject:payment.billingContact.postalAddress.postalCode forKey:@"zip1"];
+            }
             self.resolve(result);
 
         } else {
@@ -252,9 +289,32 @@ RCT_EXPORT_METHOD(tokenizeCard:(NSString*)clientToken
 
     NSMutableDictionary* jsResult = [NSMutableDictionary new];
 
-    //NSLog(@"paymentMethod = %@", result.paymentMethod);
-    //NSLog(@"paymentIcon = %@", result.paymentIcon);
-
+    if(result.paymentMethodType == BTDropInPaymentMethodTypePayPal) {
+                BTPayPalAccountNonce *paypalNonce = (BTPayPalAccountNonce *)result.paymentMethod;
+                [jsResult setObject:paypalNonce.firstName forKey:@"firstName"];
+                [jsResult setObject:paypalNonce.lastName forKey:@"lastName"];
+                [jsResult setObject:paypalNonce.email forKey:@"email"];
+                if(paypalNonce.billingAddress != nil) {
+                    if(paypalNonce.billingAddress.streetAddress != nil) {
+                        [jsResult setObject:paypalNonce.billingAddress.streetAddress forKey:@"addressLine1"];
+                    }
+                     if(paypalNonce.billingAddress.extendedAddress != nil) {
+                        [jsResult setObject:paypalNonce.billingAddress.extendedAddress forKey:@"addressLine2"];
+                     }
+                     if(paypalNonce.billingAddress.locality != nil) {
+                        [jsResult setObject:paypalNonce.billingAddress.locality forKey:@"city"];
+                     }
+                     if(paypalNonce.billingAddress.region != nil) {
+                        [jsResult setObject:paypalNonce.billingAddress.region forKey:@"state"];
+                     }
+                     if(paypalNonce.billingAddress.countryCodeAlpha2 != nil) {
+                        [jsResult setObject:paypalNonce.billingAddress.countryCodeAlpha2 forKey:@"country"];
+                     }
+                     if(paypalNonce.billingAddress.postalCode != nil) {
+                        [jsResult setObject:paypalNonce.billingAddress.postalCode forKey:@"zip1"];
+                     }
+                }
+        }
     [jsResult setObject:result.paymentMethod.nonce forKey:@"nonce"];
     [jsResult setObject:result.paymentMethod.type forKey:@"type"];
     [jsResult setObject:result.paymentDescription forKey:@"description"];
