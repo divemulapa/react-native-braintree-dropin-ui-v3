@@ -16,6 +16,7 @@ Pod::Spec.new do |s|
   s.dependency    'React'
   s.dependency    'Braintree', '6.31.0'
   s.dependency    'BraintreeDropIn', '9.14.0'
+  s.dependency    'Braintree/Core', '6.31.0'
   s.dependency    'Braintree/DataCollector', '6.31.0'
   s.dependency    'Braintree/ApplePay', '6.31.0'
   s.dependency    'Braintree/Venmo', '6.31.0'
